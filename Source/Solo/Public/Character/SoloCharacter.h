@@ -20,6 +20,10 @@ public:
 	ASoloCharacter(const FObjectInitializer& ObjectInitializer);
 
 protected:
+	UPROPERTY(EditDefaultsOnly, Category = "AnimTools")
+	UCurveFloat* DistanceCurve = nullptr;
+	FVector DistanceCurveStartPoint = FVector::ZeroVector;
+	bool bDistanceCurveResetPending = false;
 	UPROPERTY(BlueprintReadWrite, Category = "Debug")
 	FVector2D FakeMoveInput;
 	FVector2D MoveInput;

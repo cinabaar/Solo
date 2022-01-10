@@ -43,6 +43,10 @@
 		{
 			"Name": "ControlRig",
 			"Enabled": true
+		},
+		{
+			"Name": "FullBodyIK",
+			"Enabled": true
 		}
 	]
 }

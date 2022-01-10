@@ -4,7 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
+#if WITH_EDITOR
+#include "IDetailCustomization.h"
+#endif
 #include "SoloBlueprintFunctionLibrary.generated.h"
+
+class UAimOffsetBlendSpace;
 
 UENUM(BlueprintType)
 enum class ECardinalDirection : uint8
@@ -17,6 +22,8 @@ enum class ECardinalDirection : uint8
 	Invalid = 255 UMETA(DisplayName = "Invalid"),
 };
 
+FString EnumToString(const ECardinalDirection Value);
+
 class UBlendSpaceBase;
 
 UCLASS(BlueprintType)
@@ -25,36 +32,54 @@ class SOLO_API USoloAnimSetDefinition : public UDataAsset
 	GENERATED_BODY()
 public:
 	USoloAnimSetDefinition();
-	
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	UBlendSpaceBase* RunBlend = nullptr;
-	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly)
-	float AnimRunSpeed = 0.f;
+	UAnimSequence* Idle = nullptr;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	UBlendSpaceBase* WalkBlend = nullptr;
-	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly)
-	float AnimWalkSpeed = 0.f;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize))
-	TMap<ECardinalDirection, UAnimSequence*> RunStartAnims;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize))
+	UAimOffsetBlendSpace* AimOffset = nullptr;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Walk_{Dir}"))
+	TMap<ECardinalDirection, UAnimSequence*> WalkAnims;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Run_{Dir}"))
+	TMap<ECardinalDirection, UAnimSequence*> RunAnims;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Sprint_{Dir}"))
+	TMap<ECardinalDirection, UAnimSequence*> SprintAnims;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Walk_{Dir}_Start"))
 	TMap<ECardinalDirection, UAnimSequence*> WalkStartAnims;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize))
-	TMap<ECardinalDirection, UAnimSequence*> RunStopAnims;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Run_{Dir}_Start"))
+	TMap<ECardinalDirection, UAnimSequence*> RunStartAnims;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Sprint_{Dir}_Start"))
+	TMap<ECardinalDirection, UAnimSequence*> SprintStartAnims;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Walk_{Dir}_Stop"))
 	TMap<ECardinalDirection, UAnimSequence*> WalkStopAnims;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Run_{Dir}_Stop"))
+	TMap<ECardinalDirection, UAnimSequence*> RunStopAnims;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Sprint_{Dir}_Stop"))
+	TMap<ECardinalDirection, UAnimSequence*> SprintStopAnims;
+	// UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Walk_{Dir}_Start_{Angle}"))
+	// TMap<ECardinalDirection, UAnimSequence*> WalkRotStartAnims;
+	// UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Run_{Dir}_Start_{Angle}"))
+	// TMap<ECardinalDirection, UAnimSequence*> RunRotStartAnims;
+	// UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Sprint_{Dir}_Start_{Angle}"))
+	// TMap<ECardinalDirection, UAnimSequence*> SprintRotStartAnims;
+	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize))
 	TMap<int32, UAnimSequence*> TurnAnims;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	UAnimSequence* JumpAnim = nullptr;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	UAnimSequence* JumpApex = nullptr;
-	UPROPERTY(EditAnywhere, BlueprintReadOnly)
-	UAnimSequence* JumpPreLand = nullptr;
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 };
+
+#if WITH_EDITOR
+
+class FAnimSetCustomization: public IDetailCustomization
+{
+public:
+	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
+
+	static TSharedRef< IDetailCustomization > MakeInstance();
+};
+#endif
 
 USTRUCT(BlueprintType)
 struct FCardinalDirectionData
@@ -67,6 +92,24 @@ public:
 	ECardinalDirection SecondaryCardinalDirection = ECardinalDirection::Invalid;
 	UPROPERTY(EditAnywhere, BlueprintReadWrite)
 	float Alpha = 0;
+};
+
+USTRUCT(BlueprintType)
+struct FAnimStateMachineHandle
+{
+	GENERATED_BODY()
+public:
+	const struct FBakedAnimationStateMachine* StateMachineDesc = nullptr;
+	struct FAnimNode_StateMachine* StateMachine = nullptr;
+};
+
+USTRUCT(BlueprintType)
+struct FAnimStateMachineStateHandle
+{
+	GENERATED_BODY()
+public:
+	struct FAnimNode_StateMachine* StateMachine = nullptr;
+	int32 StateIndex = INDEX_NONE;
 };
 /**
  * 
@@ -88,6 +131,8 @@ determines which cardinal direction to switch to. Note: This function expectes t
 	static UAnimSequence* GetWalkAnim(USoloAnimSetDefinition* AnimSet, ECardinalDirection Direction);
 	UFUNCTION(BlueprintPure, Category = "Animation Utility", meta = (BlueprintThreadSafe, CompactNodeTitle = "Run"))
 	static UAnimSequence* GetRunAnim(USoloAnimSetDefinition* AnimSet, ECardinalDirection Direction);
+	UFUNCTION(BlueprintPure, Category = "Animation Utility")
+	static float GetAnimRateScale(UAnimSequenceBase* Anim);
 	
 	UFUNCTION(BlueprintCallable, Category = "Animation Utility")
 	static float GetAnimCurveValueAtTime(UAnimSequenceBase* Anim, FName AnimCurveName, float Time);
@@ -98,8 +143,35 @@ determines which cardinal direction to switch to. Note: This function expectes t
 	UFUNCTION(BlueprintCallable, Category = "Animation Warping Utility")
 	static float GetRotationRelativeToVelocityEx(const FRotator& Rotation, const FVector& Velocity);
 
+	UFUNCTION(BlueprintCallable, Category = "Animation Utility")
+	static FAnimStateMachineHandle GetStateMachineHandle(UAnimInstance* AnimInstance, FName StateMachineName);
+	UFUNCTION(BlueprintCallable, Category = "Animation Utility")
+	static FAnimStateMachineStateHandle GetStateMachineStateHandle(const FAnimStateMachineHandle& StateMachine, FName StateName);
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Animation Utility")
+	static float GetStateWeight(const FAnimStateMachineStateHandle& StateMachine);
+	
 	UFUNCTION(BlueprintCallable, Category = "Editor")
 	static void MarkPackageDirty(UObject* Package);
 	UFUNCTION(BlueprintCallable, Category = "Editor")
 	static void ApplyDistanceCurveAsRootMotion(UAnimSequence* Sequence, FVector OptionalDirection);
+	
+	static bool FindDirectionChangeTime(UAnimSequence* Seq, float& Time);
+	UFUNCTION(BlueprintCallable, Category = "Editor")
+	static void GenerateSyncMarkers(UAnimSequence* Seq, bool bAnimLoops);
+	UFUNCTION(BlueprintCallable, Category = "Editor")
+	static void GenerateSpeedCurve(UAnimSequence* Seq, bool bAnimLoops, bool bUseFinalSpeed);
+	UFUNCTION(BlueprintCallable, Category = "Editor")
+	static void GenerateDistanceCurve(UAnimSequence* Seq);
+	UFUNCTION(BlueprintCallable, Category = "Editor")
+	static void GenerateRotationCurve(UAnimSequence* Seq);
+	UFUNCTION(BlueprintCallable, Category = "Editor")
+	static void GenerateRotating(UAnimSequence* Seq);
+	UFUNCTION(BlueprintCallable, Category = "Editor")
+	static void GenerateDisableSpeedWarpingCurve(UAnimSequence* Seq);
+
+	//returns true if work was done
+	UFUNCTION(BlueprintCallable, Category = "Editor")
+	static bool GenerateIKBonesFollowFK(UAnimSequence* Seq, bool bDryRun);
+
+	static FTransform GetBonePoseForTimeRelativeToRoot(UAnimSequence* Seq, FName Bone, float Time, bool bUseRoot = false);
 };

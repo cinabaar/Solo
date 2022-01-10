@@ -35,7 +35,10 @@ public class Solo : ModuleRules
 		if (Target.bBuildEditor)
 		{
 			PrivateDependencyModuleNames.AddRange(new string[] {
-				"UnrealEd"
+				"UnrealEd",
+				"AnimationModifiers",
+				"AnimationEditor",
+				"EditorScriptingUtilities"
 			});
 		}
 		// Uncomment if you are using Slate UI

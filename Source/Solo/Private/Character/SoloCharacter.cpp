@@ -184,6 +184,28 @@ void ASoloCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLi
 void ASoloCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+#if WITH_EDITOR
+	if(DistanceCurve)
+	{
+		if(GetVelocity().IsZero())
+		{
+			bDistanceCurveResetPending = true;
+			DistanceCurveStartPoint = GetActorLocation();
+		}
+		else
+		{
+			if(bDistanceCurveResetPending)
+			{
+				bDistanceCurveResetPending = false;
+				DistanceCurve->FloatCurve.Reset();
+				DistanceCurve->FloatCurve.AddKey(0, 0);
+			}
+			float Time = DistanceCurve->FloatCurve.GetLastKey().Time + DeltaSeconds;
+			DistanceCurve->FloatCurve.AddKey(Time, (GetActorLocation() - DistanceCurveStartPoint).Size2D());
+			DistanceCurve->MarkPackageDirty();
+		}
+	}
+#endif
 }
 
 void ASoloCharacter::OnRep_ReplicatedBasedMovement()
@@ -245,7 +267,8 @@ void ASoloCharacter::SetAccelerating(bool bNewAccelerating)
 
 UAbilitySystemComponent* ASoloCharacter::GetAbilitySystemComponent() const
 {
-	return nullptr;
+	auto* PS = GetPlayerState<ASoloPlayerState>();
+	return PS? PS->GetAbilitySystemComponent() : nullptr;
 }
 
 

@@ -3,6 +3,9 @@
 #include "Solo.h"
 
 #include "Modules/ModuleManager.h"
+#if WITH_EDITOR
+#include "Util/SoloBlueprintFunctionLibrary.h"
+#endif
 
 #define LOCTEXT_NAMESPACE "Solo"
 
@@ -20,6 +23,10 @@ public:
 void FSoloModuleImpl::StartupModule()
 {
 	UE_LOG(LogSolo, Log, TEXT("StartupGameModule"));
+#if WITH_EDITOR
+	FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
+	PropertyModule.RegisterCustomClassLayout( "SoloAnimSetDefinition", FOnGetDetailCustomizationInstance::CreateStatic(&FAnimSetCustomization::MakeInstance));
+#endif
 }
 
 void FSoloModuleImpl::ShutdownModule()
