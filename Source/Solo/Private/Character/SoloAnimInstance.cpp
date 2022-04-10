@@ -7,7 +7,6 @@
 #include "Character/SoloCharacter.h"
 #include "Character/SoloCharacterMovementComponent.h"
 #include "Util/SoloBlueprintFunctionLibrary.h"
-#include "StriderMath.h"
 #include "Animation/AnimNode_StateMachine.h"
 #include "Components/CapsuleComponent.h"
 #include "Engine/Canvas.h"
@@ -115,7 +114,6 @@ void USoloAnimInstance::NativeInitializeAnimation()
 	CacheBasicInfo();
 	if (auto* StateMachineDesc = GetStateMachineInstanceDesc(SMLocomotionName))
 	{
-		LocomotionStateMachine = GetStateMachineInstanceFromName(SMLocomotionName);
 		MoveStartStateIndex = StateMachineDesc->FindStateIndex(MoveStartStateName);
 		MoveStopStateIndex = StateMachineDesc->FindStateIndex(MoveStopStateName);
 		IdleStateIndex = StateMachineDesc->FindStateIndex(IdleStateName);
@@ -203,7 +201,7 @@ void USoloAnimInstance::UpdateMoveDirection()
 
 void USoloAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 {
-	if(!SoloPawn || !SoloCharacterMovement || !LocomotionStateMachine)
+	if(!SoloPawn || !SoloCharacterMovement || !GetStateMachineInstanceFromName(SMLocomotionName))
 	{
 		return;
 	}
@@ -214,21 +212,26 @@ void USoloAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 		UE_LOG(LogTemp, VeryVerbose, TEXT("NativeUpdateAnimation %lld"), UKismetSystemLibrary::GetFrameCount());
 	}
 
+	auto CalculatePlayRate = [](const float TotalSpeedScale, const float PlaybackWeight,
+	const float MinPlayRate, const float MaxPlayRate)
+	{
+		return FMath::Clamp((TotalSpeedScale - 1.0f) * PlaybackWeight + 1.0f, MinPlayRate, MaxPlayRate);
+	};
 	if (bAccelerating)
 	{
 		const float JogSpeedScale = Speed / MaxJogSpeed;
-		JogPlayRate = UStriderMath::CalculatePlayRate(JogSpeedScale, SpeedWarping_PlaybackWeight, SpeedWarping_MinPlayRate, SpeedWarping_MaxPlayRate);
-		JogStrideScale = UStriderMath::CalculateStrideScale(JogSpeedScale, JogPlayRate);
+		JogPlayRate = CalculatePlayRate(JogSpeedScale, SpeedWarping_PlaybackWeight, SpeedWarping_MinPlayRate, SpeedWarping_MaxPlayRate);
+		JogStrideScale = JogSpeedScale / JogPlayRate;
 
 		const float WalkSpeedScale = Speed / MaxWalkSpeed;
-		WalkPlayRate = UStriderMath::CalculatePlayRate(WalkSpeedScale, SpeedWarping_PlaybackWeight, SpeedWarping_MinPlayRate, SpeedWarping_MaxPlayRate);
-		WalkStrideScale = UStriderMath::CalculateStrideScale(WalkSpeedScale, WalkPlayRate);
+		WalkPlayRate = CalculatePlayRate(WalkSpeedScale, SpeedWarping_PlaybackWeight, SpeedWarping_MinPlayRate, SpeedWarping_MaxPlayRate);
+		WalkStrideScale = WalkSpeedScale / WalkPlayRate;
 	}
 	
 	UpdateMoveDirection();
 
 	PrevJumpWeight = JumpWeight;
-	JumpWeight = LocomotionStateMachine->GetStateWeight(JumpStateIndex);
+	JumpWeight = GetStateMachineInstanceFromName(SMLocomotionName)->GetStateWeight(JumpStateIndex);
 
 	if(!bPrevInAir && bInAir)
 	{
@@ -251,7 +254,7 @@ void USoloAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	}
 
 	auto PrevIdleWeight = IdleStateWeight;
-	IdleStateWeight = LocomotionStateMachine->GetStateWeight(IdleStateIndex);
+	IdleStateWeight = GetStateMachineInstanceFromName(SMLocomotionName)->GetStateWeight(IdleStateIndex);
 
 	if(!bMoved && Speed > 0)
 	{
@@ -347,14 +350,14 @@ void USoloAnimInstance::UpdateInAir(float DeltaTime)
 		{
 			float PelvisChange = FMath::Abs(PrevJumpPelvisTransform.GetLocation().Z - JumpPelvisTransform.GetLocation().Z);
 			//UE_LOG(LogTemp, Log, TEXT("%f %f"), PelvisChange, JumpAnimTime);
-			if(PelvisChange < 1.f && JumpAnimTime > JumpAnim->SequenceLength * 0.5f)
+			if(PelvisChange < 1.f && JumpAnimTime > JumpAnim->GetPlayLength() * 0.5f)
 			{
 				if (StartedWarpingJumpAt == 0.f)
 				{
 					StartedWarpingJumpAt = JumpAnimTime;
 				}
-				JumpPlayRate = (JumpAnim->SequenceLength - JumpAnimTime) / (JumpAnim->SequenceLength - StartedWarpingJumpAt);
-				JumpAnimTime = FMath::Clamp(JumpAnimTime + DeltaTime * JumpPlayRate, 0.f, JumpAnim->SequenceLength);
+				JumpPlayRate = (JumpAnim->GetPlayLength() - JumpAnimTime) / (JumpAnim->GetPlayLength() - StartedWarpingJumpAt);
+				JumpAnimTime = FMath::Clamp(JumpAnimTime + DeltaTime * JumpPlayRate, 0.f, JumpAnim->GetPlayLength());
 			}
 			else
 			{
@@ -431,7 +434,7 @@ void USoloAnimInstance::UpdateInAir(float DeltaTime)
 	{
 		float JumpHeight = InAirLandLocation.Z - Location.Z;
 		JumpPreLandTime = USoloBlueprintFunctionLibrary::FindAnimCurveTimeForValue(JumpPreLand, DistanceCurveName, JumpHeight);
-		float MinSupportedOffset = USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(JumpPreLand, DistanceCurveName, JumpPreLand->SequenceLength);
+		float MinSupportedOffset = USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(JumpPreLand, DistanceCurveName, JumpPreLand->GetPlayLength());
 		if(JumpHeight > MinSupportedOffset)
 		{
 			JumpPreLandRootOffset = -MinSupportedOffset + JumpHeight;
@@ -494,7 +497,7 @@ void USoloAnimInstance::UpdateTurn(float DeltaTime)
 	if (Speed > 0)
 	{
 		EndTurn();
-		float TurnWeight = LocomotionStateMachine->GetStateWeight(TurnStateIndex);
+		float TurnWeight = GetStateMachineInstanceFromName(SMLocomotionName)->GetStateWeight(TurnStateIndex);
 		if (TurnWeight == 0)
 		{
 			TurnAnim = nullptr;
@@ -513,7 +516,7 @@ void USoloAnimInstance::UpdateTurn(float DeltaTime)
 		{
 			float PrevTurnAnimPosition = TurnAnimPosition;
 			TurnAnimPosition += DeltaTime * TurnPlayRate;
-			TurnAnimPosition = FMath::Clamp(TurnAnimPosition, 0.f, TurnAnim->SequenceLength);
+			TurnAnimPosition = FMath::Clamp(TurnAnimPosition, 0.f, TurnAnim->GetPlayLength());
 			float PrevDistanceCurveValue = USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(TurnAnim, RotationCurveName, PrevTurnAnimPosition);
 			float DistanceCurveValue = USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(TurnAnim, RotationCurveName, TurnAnimPosition);
 			float DistanceCurveDiff = DistanceCurveValue - PrevDistanceCurveValue;
@@ -529,7 +532,7 @@ void USoloAnimInstance::UpdateTurn(float DeltaTime)
 		{
 			float PrevTurnAnimPosition = TurnAnimPosition;
 			TurnAnimPosition -= DeltaTime * TurnPlayRate;
-			TurnAnimPosition = FMath::Clamp(TurnAnimPosition, 0.f, TurnAnim->SequenceLength);
+			TurnAnimPosition = FMath::Clamp(TurnAnimPosition, 0.f, TurnAnim->GetPlayLength());
 			float PrevDistanceCurveValue = USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(TurnAnim, RotationCurveName, PrevTurnAnimPosition);
 			float DistanceCurveValue = USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(TurnAnim, RotationCurveName, TurnAnimPosition);
 			float DistanceCurveDiff = DistanceCurveValue - PrevDistanceCurveValue;
@@ -539,7 +542,7 @@ void USoloAnimInstance::UpdateTurn(float DeltaTime)
 			if (DistanceCurveValue <= -TurnAnimExpectedTurn * 0.95)
 			{
 				EndTurn();
-				float TurnWeight = LocomotionStateMachine->GetStateWeight(TurnStateIndex);
+				float TurnWeight = GetStateMachineInstanceFromName(SMLocomotionName)->GetStateWeight(TurnStateIndex);
 				if (TurnWeight == 0)
 				{
 					TurnAnim = nullptr;
@@ -590,8 +593,8 @@ void USoloAnimInstance::EnterTurnRecovery()
 void USoloAnimInstance::UpdateTurnRecovery(float DeltaTime)
 {
 	TurnRecoveryAnimPosition += DeltaTime;
-	TurnRecoveryAnimPosition = FMath::Clamp(TurnRecoveryAnimPosition, 0.f, TurnRecoveryAnim->SequenceLength);
-	float TurnRecoveryWeight = LocomotionStateMachine->GetStateWeight(TurnRecoveryStateIndex);
+	TurnRecoveryAnimPosition = FMath::Clamp(TurnRecoveryAnimPosition, 0.f, TurnRecoveryAnim->GetPlayLength());
+	float TurnRecoveryWeight = GetStateMachineInstanceFromName(SMLocomotionName)->GetStateWeight(TurnRecoveryStateIndex);
 	if(TurnRecoveryWeight == 0)
 	{
 		TurnRecoveryAnim = nullptr;
@@ -673,7 +676,7 @@ void USoloAnimInstance::UpdateStartingMovement(float DeltaTime)
 	{
 		bStartingMove = false;
 		PrevMoveStartStateWeight = MoveStartStateWeight;
-		MoveStartStateWeight = LocomotionStateMachine->GetStateWeight(MoveStartStateIndex);
+		MoveStartStateWeight = GetStateMachineInstanceFromName(SMLocomotionName)->GetStateWeight(MoveStartStateIndex);
 		if (MoveStartStateWeight == 0.f)
 		{
 			EndStartingMovement();
@@ -767,7 +770,7 @@ void USoloAnimInstance::UpdateStoppingMovement(float DeltaTime)
 	{
 		bStoppingMove = false;
 		PrevMoveStopStateWeight = MoveStopStateWeight;
-		MoveStopStateWeight = LocomotionStateMachine->GetStateWeight(MoveStopStateIndex);
+		MoveStopStateWeight = GetStateMachineInstanceFromName(SMLocomotionName)->GetStateWeight(MoveStopStateIndex);
 		if (MoveStopStateWeight == 0 && PrevMoveStopStateWeight > 0)
 		{
 			EndStoppingMovement();
@@ -804,8 +807,8 @@ void USoloAnimInstance::UpdateStoppingMovement(float DeltaTime)
 			{
 				StopTimeA += DeltaTime;
 				StopTimeB += DeltaTime;
-				StopTimeA = FMath::Clamp(StopTimeA, 0.f, StopMoveAnim_A->SequenceLength);
-				StopTimeB = FMath::Clamp(StopTimeB, 0.f, StopMoveAnim_B->SequenceLength);
+				StopTimeA = FMath::Clamp(StopTimeA, 0.f, StopMoveAnim_A->GetPlayLength());
+				StopTimeB = FMath::Clamp(StopTimeB, 0.f, StopMoveAnim_B->GetPlayLength());
 			}
 		}
 		else
@@ -819,8 +822,8 @@ void USoloAnimInstance::UpdateStoppingMovement(float DeltaTime)
 	{
 		StopTimeA += DeltaTime;
 		StopTimeB += DeltaTime;
-		StopTimeA = FMath::Clamp(StopTimeA, 0.f, StopMoveAnim_A->SequenceLength);
-		StopTimeB = FMath::Clamp(StopTimeB, 0.f, StopMoveAnim_B->SequenceLength);
+		StopTimeA = FMath::Clamp(StopTimeA, 0.f, StopMoveAnim_A->GetPlayLength());
+		StopTimeB = FMath::Clamp(StopTimeB, 0.f, StopMoveAnim_B->GetPlayLength());
 	}
 }
 

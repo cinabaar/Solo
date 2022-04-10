@@ -14,9 +14,7 @@ public class Solo : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
-			"Switcheroo",
 			"AIModule",
-			"Strider",
 			"AnimGraph"
 		});
 
@@ -36,7 +34,7 @@ public class Solo : ModuleRules
 		{
 			PrivateDependencyModuleNames.AddRange(new string[] {
 				"UnrealEd",
-				"AnimationModifiers",
+				"AnimationBlueprintLibrary",
 				"AnimationEditor",
 				"EditorScriptingUtilities"
 			});

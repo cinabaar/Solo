@@ -4,7 +4,6 @@
 #include "Player/SoloPlayerController.h"
 #include "Debug/SoloCheatManager.h"
 #include "Kismet/GameplayStatics.h"
-#include "ISwitcherooModule.h"
 #include "Camera/SoloPlayerCameraManager.h"
 #include "Character/SoloCharacter.h"
 #include "GameFramework/Character.h"
@@ -38,10 +37,6 @@ void ASoloPlayerController::PostSeamlessTravel()
 void ASoloPlayerController::InitInputSystem()
 {
 	Super::InitInputSystem();
-	if (ISwitcherooModule* Switcheroo = ISwitcherooModule::Get())
-	{
-		Switcheroo->EnableInputDetection();
-	}
 }
 
 void ASoloPlayerController::SetPawn(APawn* InPawn)

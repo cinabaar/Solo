@@ -3,16 +3,18 @@
 
 #include "Util/SoloBlueprintFunctionLibrary.h"
 
+#include "Algo/MaxElement.h"
 #include "Animation/AimOffsetBlendSpace.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimNode_StateMachine.h"
 #include "Animation/AnimStateMachineTypes.h"
-#include "Animation/BlendSpaceBase.h"
+#include "Animation/BlendSpace.h"
 #include "Internationalization/Regex.h"
 #include "Animation/AnimSequence.h"
+#include "Animation/AnimSequenceHelpers.h"
+
 #if WITH_EDITOR
-#include "ScopedTransaction.h"
-#include "AnimationModifiers/Public/AnimationBlueprintLibrary.h"
+#include "AnimationBlueprintLibrary/Public/AnimationBlueprintLibrary.h"
 #include "DetailCategoryBuilder.h"
 #include "DetailLayoutBuilder.h"
 #include "DetailWidgetRow.h"
@@ -121,8 +123,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 			{
 				if(!bDryRun)
 				{
-					auto* NewAnim = UEditorAssetLibrary::DuplicateAsset(AnimPath, Path + NewAnimName);
-					if(NewAnim)
+					if(auto* NewAnim = UEditorAssetLibrary::DuplicateAsset(AnimPath, Path + NewAnimName))
 					{
 						Anim = Cast<UAnimSequence>(NewAnim);
 						AnimSet->MarkPackageDirty();
@@ -157,7 +158,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 
 				const TArray<FBlendSample>& BlendSamples = AnimSet->AimOffset->GetBlendSamples();
 
-				auto GetSampleName = [](FVector SampleValue) -> FString
+				auto GetSampleName = [](const FVector& SampleValue) -> FString
 				{
 					FString BaseName = TEXT("AO_Idle_");
 					if(SampleValue.Y == 0)
@@ -201,8 +202,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 				{
 					if(!bDryRun)
 					{
-						auto* NewAnim = UEditorAssetLibrary::DuplicateAsset(AnimPath, Path + NewAnimName);
-						if(NewAnim)
+						if(auto* NewAnim = UEditorAssetLibrary::DuplicateAsset(AnimPath, Path + NewAnimName))
 						{
 							AnimSet->AimOffset = Cast<UAimOffsetBlendSpace>(NewAnim);
 							TArray<TTuple<FVector, UAnimSequence*>> NewSamples;
@@ -316,10 +316,10 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 				Last = 1;
 			}
 		}
-		float TimeBetweenSyncMarkers = Seq->SequenceLength;
+		float TimeBetweenSyncMarkers = Seq->GetDataModel()->GetPlayLength();
 		for(int i = 0; i < Seq->AuthoredSyncMarkers.Num() - 1; ++i)
 		{
-			float TimeBetween = (Seq->AuthoredSyncMarkers[i+1].Time - Seq->AuthoredSyncMarkers[i].Time);
+			const float TimeBetween = (Seq->AuthoredSyncMarkers[i+1].Time - Seq->AuthoredSyncMarkers[i].Time);
 			if(TimeBetween < TimeBetweenSyncMarkers)
 			{
 				TimeBetweenSyncMarkers = TimeBetween;
@@ -333,7 +333,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 				USoloBlueprintFunctionLibrary::GenerateSyncMarkers(Seq, bLooping);
 			});
 		}
-		else if(!bLooping && LastSyncMarkerTime < Seq->SequenceLength * 0.8f)
+		else if(!bLooping && LastSyncMarkerTime < Seq->GetDataModel()->GetPlayLength() * 0.8f)
 		{
 			AddRow(Seq, FString::Printf(TEXT("Sync marker too far from end in non-looping animation %s. Won't work too well"), *Seq->GetName()), false, [=](){});
 		}
@@ -341,7 +341,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 		{
 			AddRow(Seq, FString::Printf(TEXT("Uneven amount of sync markers in %s. Please fix"), *Seq->GetName()), false, [=](){});
 		}
-		else if(TimeBetweenSyncMarkers < Seq->SequenceLength * 0.10f)
+		else if(TimeBetweenSyncMarkers < Seq->GetDataModel()->GetPlayLength() * 0.10f)
 		{
 			AddRow(Seq, FString::Printf(TEXT("Sync markers seem to be too close to each other in %s. Please fix"), *Seq->GetName()), false, [=](){});
 		}
@@ -358,13 +358,13 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 	};
 	auto ValidateHasCurve = [=](UAnimSequence* Seq, FString Type, FName CurveName, bool bLooping = false, bool bNonZero = true)
 	{
-		auto* Skeleton = Seq->GetSkeleton();
+		const auto* Skeleton = Seq->GetSkeleton();
 		FSmartName CurveSmartName;
-		bool bCurveExists = Skeleton->GetSmartNameByName(USkeleton::AnimCurveMappingName, CurveName, CurveSmartName);
-		float StartCurveValue = USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(Seq, CurveName, 0);
-		float EndCurveValue = USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(Seq, CurveName, Seq->SequenceLength);
-		bool bStartAnim = Type.Contains(TEXT("Start"));
-		bool bShouldHaveEvenSpeedAtEnds = CurveName == TEXT("Speed") && (bStartAnim || bLooping);
+		const bool bCurveExists = Skeleton->GetSmartNameByName(USkeleton::AnimCurveMappingName, CurveName, CurveSmartName);
+		const float StartCurveValue = USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(Seq, CurveName, 0);
+		const float EndCurveValue = USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(Seq, CurveName, Seq->GetDataModel()->GetPlayLength());
+		const bool bStartAnim = Type.Contains(TEXT("Start"));
+		const bool bShouldHaveEvenSpeedAtEnds = CurveName == TEXT("Speed") && (bStartAnim || bLooping);
 		if(!bCurveExists || !Seq->HasCurveData(CurveSmartName.UID, false) || (bShouldHaveEvenSpeedAtEnds && StartCurveValue != EndCurveValue) || (bShouldHaveEvenSpeedAtEnds && (StartCurveValue == 0.f || FMath::Abs(StartCurveValue) > 1000.f)))
 		{
 			AddRow(Seq, FString::Printf(TEXT("Missing %s curve for %s anim %s"), *CurveName.ToString(), *Type, *Seq->GetName()), true, [=]()
@@ -387,7 +387,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 				}
 				else if(CurveName == TEXT("bRotating"))
 				{
-					USoloBlueprintFunctionLibrary::GenerateRotating(Seq);
+					USoloBlueprintFunctionLibrary::GenerateRotating(Seq, false);
 				}
 			});
 		}
@@ -406,7 +406,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 	auto ValidateRootNotMoving = [=](UAnimSequence* Seq)
 	{
 		bool bRootMoving = false;
-		for(int32 i = 0; i < Seq->GetNumberOfFrames(); ++i)
+		for(int32 i = 0; i < Seq->GetDataModel()->GetNumberOfFrames(); ++i)
 		{
 			FTransform FramePose;
 			UAnimationBlueprintLibrary::GetBonePoseForFrame(Seq, TEXT("root"), i, true, FramePose);
@@ -429,13 +429,13 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 
 	auto ValidateAnims = [=](TMap<ECardinalDirection, UAnimSequence*> Anims, FString Type, TArray<FName> Curves, bool bSyncMarkers, bool bLooping = false)
 	{
-		for(auto& Anim : Anims)
+		for(const auto& Anim : Anims)
 		{
 			if(!ValidateExists(Anim.Value, Type, EnumToString(Anim.Key)))
 			{
 				continue;
 			}
-			for(auto Curve : Curves)
+			for(const auto& Curve : Curves)
 			{
 				ValidateHasCurve(Anim.Value, Type, Curve, bLooping);
 			}
@@ -452,7 +452,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 		ValidateExists(AO, TEXT("AimOffset"), TEXT(""));
 		if(AO)
 		{
-			bool bValidPreview = AO->PreviewBasePose == AnimSet->Idle;
+			const bool bValidPreview = AO->PreviewBasePose == AnimSet->Idle;
 			if(!bValidPreview)
 			{
 				AddRow(AO, FString::Printf(TEXT("Anim %s invalid preview base pose."), *AO->GetName()), true, [=]()
@@ -461,7 +461,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 					AO->MarkPackageDirty();
 				});
 			}
-			bool bValidSamples = AO->GetBlendSamples().Num() > 0;
+			const bool bValidSamples = AO->GetBlendSamples().Num() > 0;
 			if(!bValidSamples)
 			{
 				AddRow(AO, FString::Printf(TEXT("Anim %s doesn't have any samples defined"), *AO->GetName()), false, [](){});
@@ -502,7 +502,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 	// ValidateAnims(AnimSet->SprintRotStartAnims, TEXT("SprintRot"), {TEXT("Speed"), TEXT("DistanceCurve"), TEXT("DisableSpeedWarping"), TEXT("RotationCurve")}, true);
 
 	const FRegexPattern TurnAnimNamePattern(TEXT(".*_(Left|Right|L|R)_(90|180).*"));
-	for(auto& Anim : AnimSet->TurnAnims)
+	for(const auto& Anim : AnimSet->TurnAnims)
 	{
 		if(!ValidateExists(Anim.Value, TEXT("Turn"), FString::FromInt(Anim.Key)))
 		{
@@ -511,8 +511,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 
 		ValidateIKBones(Anim.Value);
 		ValidateRootNotMoving(Anim.Value);
-		FRegexMatcher Matcher(TurnAnimNamePattern, Anim.Value->GetName());
-		if(!Matcher.FindNext())
+		if(FRegexMatcher Matcher(TurnAnimNamePattern, Anim.Value->GetName()); !Matcher.FindNext())
 		{
 			AddRow(Anim.Value, TEXT("Turn anims should have [Left|Right|L|R]_[90|180] with possible prefixes and suffixes"), false, [](){});
 			continue;
@@ -530,7 +529,7 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 
 	auto DisplayCurveControls = [&DetailBuilder, CurveControlBox](UAnimSequence* Seq)
 	{
-		auto HorizontalBox = SNew(SHorizontalBox);
+		const auto HorizontalBox = SNew(SHorizontalBox);
 		auto* SmartNameContainer = Seq->GetSkeleton()->GetSmartNameContainer(USkeleton::AnimCurveMappingName);
 		TArray<FName> SmartNames;
 		SmartNames.Sort(FNameLexicalLess());
@@ -546,20 +545,16 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 		{
 			FSmartName CurveSmartName;
 			Seq->GetSkeleton()->GetSmartNameByName(USkeleton::AnimCurveMappingName, Name, CurveSmartName);
-			const FFloatCurve* AnimCurve = static_cast<const FFloatCurve*>(Seq->GetCurveData().GetCurveData(CurveSmartName.UID));
-			if(!AnimCurve)
+			if(const FFloatCurve* AnimCurve = static_cast<const FFloatCurve*>(Seq->GetCurveData().GetCurveData(CurveSmartName.UID)); !AnimCurve)
 			{
 				continue;
 			}
-			auto& Slot = HorizontalBox->AddSlot();
+			auto Slot = HorizontalBox->AddSlot();
 			Slot.AutoWidth()
 			[
 				SNew(SButton).Text(FText::FromName(Name)).OnClicked_Lambda([&DetailBuilder, Name, Seq]()
 				{
 					UAnimationBlueprintLibrary::RemoveCurve(Seq, Name);
-					Seq->RefreshCurveData();
-					Seq->MarkRawDataAsModified();
-					Seq->OnRawDataChanged();
 					Seq->MarkPackageDirty();
 					DetailBuilder.ForceRefreshDetails();
 					return FReply::Handled();
@@ -574,11 +569,10 @@ void FAnimSetCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder
 	
 	for(TFieldIterator<FProperty> It(AnimSet->GetClass()); It; ++It)
 	{
-		if(FObjectProperty* ObjProp = CastField<FObjectProperty>(*It))
+		if(const FObjectProperty* ObjProp = CastField<FObjectProperty>(*It))
 		{
 			UObject* Object = ObjProp->GetObjectPropertyValue(ObjProp->ContainerPtrToValuePtr<void>(AnimSet, 0));
-			UAnimSequence* Seq = Cast<UAnimSequence>(Object);
-			if(Seq)
+			if(UAnimSequence* Seq = Cast<UAnimSequence>(Object))
 			{
 				DisplayCurveControls(Seq);
 			}
@@ -904,7 +898,7 @@ FCardinalDirectionData USoloBlueprintFunctionLibrary::GetNextCardinalDirectionEx
 	return {};
 }
 
-bool USoloBlueprintFunctionLibrary::IsValidDirection(ECardinalDirection Dir)
+bool USoloBlueprintFunctionLibrary::IsValidDirection(const ECardinalDirection Dir)
 {
 	return Dir != ECardinalDirection::Invalid;
 }
@@ -924,7 +918,7 @@ float USoloBlueprintFunctionLibrary::GetAnimRateScale(UAnimSequenceBase* Anim)
 	return Anim? Anim->RateScale : 0.f;
 }
 
-float USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(UAnimSequenceBase* Anim, FName AnimCurveName, float Time)
+float USoloBlueprintFunctionLibrary::GetAnimCurveValueAtTime(UAnimSequenceBase* Anim, const FName AnimCurveName, float Time)
 {
 	if(!Anim)
 	{
@@ -961,14 +955,12 @@ float USoloBlueprintFunctionLibrary::FindAnimCurveTimeForValue(UAnimSequenceBase
 	{
 		return  0.f;
 	}
-	float StartSearchPos = 0.f, EndSearchPos = Anim->SequenceLength;
+	float StartSearchPos = 0.f, EndSearchPos = Anim->GetDataModel()->GetPlayLength();
 	float CurrentSearchPos = 0.f;
-	float EvalValue = 0.f;
 	while(StartSearchPos <= EndSearchPos - KINDA_SMALL_NUMBER)
 	{
 		CurrentSearchPos = (EndSearchPos + StartSearchPos) / 2.f;
-		EvalValue = AnimCurve->Evaluate(CurrentSearchPos);
-		if(EvalValue >= Value)
+		if(const float EvalValue = AnimCurve->Evaluate(CurrentSearchPos); EvalValue >= Value)
 		{
 			EndSearchPos = CurrentSearchPos;
 		}
@@ -977,15 +969,15 @@ float USoloBlueprintFunctionLibrary::FindAnimCurveTimeForValue(UAnimSequenceBase
 			StartSearchPos = CurrentSearchPos;
 		}
 	}
-	return FMath::Clamp(CurrentSearchPos, 0.f, Anim->SequenceLength);
+	return FMath::Clamp(CurrentSearchPos, 0.f, Anim->GetDataModel()->GetPlayLength());
 }
 
 float USoloBlueprintFunctionLibrary::GetRotationRelativeToVelocityEx(const FRotator& Rotation, const FVector& Velocity)
 {
 	if (Velocity.SizeSquared() < 0.0001f)
 		return 0.0f;
-	
-	FRotator Orientation = Velocity.ToOrientationRotator();
+
+	const FRotator Orientation = Velocity.ToOrientationRotator();
 	
 	float RotationZ = (Rotation - Orientation).Yaw * -1.0f;
 
@@ -1041,16 +1033,16 @@ void USoloBlueprintFunctionLibrary::MarkPackageDirty(UObject* Package)
 #endif
 }
 
-bool USoloBlueprintFunctionLibrary::FindDirectionChangeTime(UAnimSequence* Seq, float& Time)
+bool USoloBlueprintFunctionLibrary::FindDirectionChangeTime(const UAnimSequence* Seq, float& Time)
 {
 	TArray<float> DistanceCurveValues;
-	DistanceCurveValues.Reserve(Seq->GetNumberOfFrames());
-	for(int32 i = 0; i < Seq->GetNumberOfFrames(); ++i)
+	DistanceCurveValues.Reserve(Seq->GetDataModel()->GetNumberOfFrames());
+	for(int32 i = 0; i < Seq->GetDataModel()->GetNumberOfFrames(); ++i)
 	{
 		FTransform RootPose;
 		UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), Seq->GetTimeAtFrame(i), true, RootPose);
 		float Distance = RootPose.GetLocation().Size();
-		Distance = int32(Distance * 10.f) / 10.f;
+		Distance = static_cast<int32>(Distance * 10.f) / 10.f;
 		DistanceCurveValues.Add(Distance);
 	}
 
@@ -1059,8 +1051,7 @@ bool USoloBlueprintFunctionLibrary::FindDirectionChangeTime(UAnimSequence* Seq, 
 	for(int i = 0; i < DistanceCurveValues.Num() - 1; ++i)
 	{
 		float& CurrentValue = DistanceCurveValues[i];
-		const float& NextValue = DistanceCurveValues[i+1];
-		if(NextValue < CurrentValue)
+		if(const float& NextValue = DistanceCurveValues[i+1]; NextValue < CurrentValue)
 		{
 			CurrentValue *= -1;
 			bLastWasReversed = true;
@@ -1082,40 +1073,40 @@ void USoloBlueprintFunctionLibrary::GenerateSyncMarkers(UAnimSequence* Seq, bool
 {
 #if WITH_EDITOR
 
-	FName PelvisBonsName = TEXT("pelvis");
-	FName NotifyTrackName = TEXT("SyncMarkers");
+	const FName PelvisBonsName = TEXT("pelvis");
+	const FName NotifyTrackName = TEXT("SyncMarkers");
 
 	UAnimationBlueprintLibrary::RemoveAnimationNotifyTrack(Seq, NotifyTrackName);
 	UAnimationBlueprintLibrary::AddAnimationNotifyTrack(Seq, NotifyTrackName);
 
-	auto PlaceSyncMarkersBetweenTimes = [&](float CurrentTime, float NextTime, FName FootBoneName, FVector Dir)
+	auto PlaceSyncMarkersBetweenTimes = [&](const float CurrentTime, const float NextTime, const FName FootBoneName, const FVector Dir)
 	{
-		FVector CurrentFootLoc = GetBonePoseForTimeRelativeToRoot(Seq, FootBoneName, CurrentTime).GetLocation();
-		FVector NextFootLoc= GetBonePoseForTimeRelativeToRoot(Seq, FootBoneName, NextTime).GetLocation();
-		FVector CurrentPelvisLoc = GetBonePoseForTimeRelativeToRoot(Seq, PelvisBonsName, CurrentTime).GetLocation();
-		FVector NextPelvisLoc = GetBonePoseForTimeRelativeToRoot(Seq, PelvisBonsName, NextTime).GetLocation();
-		FVector CurrentFootPos = CurrentFootLoc.ProjectOnToNormal(Dir);
-		FVector NextFootPos = NextFootLoc.ProjectOnToNormal(Dir);
-		FVector CurrentPelvisPos = CurrentPelvisLoc.ProjectOnToNormal(Dir);
-		FVector NextPelvisPos = NextPelvisLoc.ProjectOnToNormal(Dir);
-		float CurrentDot = (CurrentFootPos - CurrentPelvisPos) | Dir;
-		float NextDot = (NextFootPos - NextPelvisPos) | Dir;
+		const FVector CurrentFootLoc = GetBonePoseForTimeRelativeToRoot(Seq, FootBoneName, CurrentTime).GetLocation();
+		const FVector NextFootLoc= GetBonePoseForTimeRelativeToRoot(Seq, FootBoneName, NextTime).GetLocation();
+		const FVector CurrentPelvisLoc = GetBonePoseForTimeRelativeToRoot(Seq, PelvisBonsName, CurrentTime).GetLocation();
+		const FVector NextPelvisLoc = GetBonePoseForTimeRelativeToRoot(Seq, PelvisBonsName, NextTime).GetLocation();
+		const FVector CurrentFootPos = CurrentFootLoc.ProjectOnToNormal(Dir);
+		const FVector NextFootPos = NextFootLoc.ProjectOnToNormal(Dir);
+		const FVector CurrentPelvisPos = CurrentPelvisLoc.ProjectOnToNormal(Dir);
+		const FVector NextPelvisPos = NextPelvisLoc.ProjectOnToNormal(Dir);
+		const float CurrentDot = (CurrentFootPos - CurrentPelvisPos) | Dir;
+		const float NextDot = (NextFootPos - NextPelvisPos) | Dir;
 		if(CurrentDot >= 0 && NextDot < 0)
 		{
-			float Time = CurrentTime;
+			const float Time = CurrentTime;
 			UAnimationBlueprintLibrary::AddAnimationSyncMarker(Seq, FootBoneName, Time, NotifyTrackName);
 		}
 	};
 
-	const int32 Steps = Seq->GetNumberOfFrames() * 1000;
+	const int32 Steps = Seq->GetDataModel()->GetNumberOfFrames() * 1000;
 
-	for(auto FootBoneName : {TEXT("foot_r"), TEXT("foot_l")})
+	for(const auto FootBoneName : {TEXT("foot_r"), TEXT("foot_l")})
 	{
 		FVector Dir;
 		for(int32 i = 0; i < Steps - 1 ; ++i)
 		{
-			float CurrentTime = (Seq->SequenceLength / Steps)  * i;
-			float NextTime = (Seq->SequenceLength / Steps)  * (i + 1);
+			const float CurrentTime = (Seq->GetDataModel()->GetPlayLength() / Steps)  * i;
+			const float NextTime = (Seq->GetDataModel()->GetPlayLength() / Steps)  * (i + 1);
 
 			FTransform RootStartPos, RootEndPos;
 			UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), CurrentTime, true, RootStartPos);
@@ -1127,7 +1118,7 @@ void USoloBlueprintFunctionLibrary::GenerateSyncMarkers(UAnimSequence* Seq, bool
   		}
 		if(bAnimLoops)
 		{
-			PlaceSyncMarkersBetweenTimes(Seq->SequenceLength, 0, FootBoneName, Dir);
+			PlaceSyncMarkersBetweenTimes(Seq->GetDataModel()->GetPlayLength(), 0, FootBoneName, Dir);
 		}
 	}
 	
@@ -1145,38 +1136,35 @@ void USoloBlueprintFunctionLibrary::GenerateSpeedCurve(UAnimSequence* Seq, bool 
 
 	if(!bUseFinalSpeed)
 	{
-		for(int32 i = 0; i < Seq->GetNumberOfFrames() - 1; ++i)
+		for(int32 i = 0; i < Seq->GetDataModel()->GetNumberOfFrames() - 1; ++i)
 		{
-			float CurrentTime = Seq->GetTimeAtFrame(i);
-			float NextTime = Seq->GetTimeAtFrame(i + 1);
-			float dT = NextTime - CurrentTime;
+			const float CurrentTime = Seq->GetTimeAtFrame(i);
+			const float NextTime = Seq->GetTimeAtFrame(i + 1);
+			const float dT = NextTime - CurrentTime;
 			FTransform CurrentRootPose, NextRootPose;
 			UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), CurrentTime, true, CurrentRootPose);
 			UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), NextTime, true, NextRootPose);
-			float Distance = (NextRootPose.GetLocation() - CurrentRootPose.GetLocation()).Size();
-			Value = int32((Distance / dT) * 10.f) / 10.f;
+			const float Distance = (NextRootPose.GetLocation() - CurrentRootPose.GetLocation()).Size();
+			Value = static_cast<int32>((Distance / dT) * 10.f) / 10.f;
 			UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, SpeedCurveName, NextTime, Value);
 		}
 	}
 	else
 	{
-		float CurrentTime = Seq->GetTimeAtFrame(Seq->GetNumberOfFrames() - 2);
-		float NextTime = Seq->GetTimeAtFrame(Seq->GetNumberOfFrames() - 1);
-		float dT = NextTime - CurrentTime;
+		const float CurrentTime = Seq->GetTimeAtFrame(Seq->GetDataModel()->GetNumberOfFrames() - 2);
+		const float NextTime = Seq->GetTimeAtFrame(Seq->GetDataModel()->GetNumberOfFrames() - 1);
+		const float dT = NextTime - CurrentTime;
 		FTransform CurrentRootPose, NextRootPose;
 		UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), CurrentTime, true, CurrentRootPose);
 		UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), NextTime, true, NextRootPose);
-		float Distance = (NextRootPose.GetLocation() - CurrentRootPose.GetLocation()).Size();
-		Value = int32((Distance / dT) * 10.f) / 10.f;
+		const float Distance = (NextRootPose.GetLocation() - CurrentRootPose.GetLocation()).Size();
+		Value = static_cast<int32>((Distance / dT) * 10.f) / 10.f;
 		UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, SpeedCurveName, NextTime, Value);
 	}
 	if(bAnimLoops || bUseFinalSpeed)
 	{
 		UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, SpeedCurveName, 0, Value);
 	}
-	Seq->RefreshCurveData();
-	Seq->MarkRawDataAsModified();
-	Seq->OnRawDataChanged();
 	Seq->MarkPackageDirty();
 }
 
@@ -1187,14 +1175,14 @@ void USoloBlueprintFunctionLibrary::GenerateDistanceCurve(UAnimSequence* Seq)
 	UAnimationBlueprintLibrary::AddCurve(Seq, DistanceCurveName);
 
 	TArray<float> DistanceCurveValues;
-	DistanceCurveValues.Reserve(Seq->GetNumberOfFrames());
-	for(int32 i = 0; i < Seq->GetNumberOfFrames(); ++i)
+	DistanceCurveValues.Reserve(Seq->GetDataModel()->GetNumberOfFrames());
+	for(int32 i = 0; i <= Seq->GetDataModel()->GetNumberOfFrames(); ++i)
 	{
-		float Time = Seq->GetTimeAtFrame(i);
+		const float Time = Seq->GetTimeAtFrame(i);
 		FTransform RootPose;
 		UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), Time, true, RootPose);
 		float Distance = RootPose.GetLocation().Size();
-		Distance = int32(Distance * 10.f) / 10.f;
+		Distance = static_cast<int32>(Distance * 10.f) / 10.f;
 		DistanceCurveValues.Add(Distance);
 	}
 
@@ -1202,8 +1190,7 @@ void USoloBlueprintFunctionLibrary::GenerateDistanceCurve(UAnimSequence* Seq)
 	for(int i = 0; i < DistanceCurveValues.Num() - 1; ++i)
 	{
 		float& CurrentValue = DistanceCurveValues[i];
-		const float& NextValue = DistanceCurveValues[i+1];
-		if(NextValue < CurrentValue)
+		if(const float& NextValue = DistanceCurveValues[i+1]; NextValue < CurrentValue)
 		{
 			CurrentValue *= -1;
 			bLastWasReversed = true;
@@ -1215,19 +1202,41 @@ void USoloBlueprintFunctionLibrary::GenerateDistanceCurve(UAnimSequence* Seq)
 			CurrentValue = (PrevValue + NextValue) / 2.f;
 		}
 	}
-	for(int32 i = 0; i < Seq->GetNumberOfFrames(); ++i)
+	for(int32 i = 0; i < DistanceCurveValues.Num(); ++i)
 	{
 		UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, DistanceCurveName, Seq->GetTimeAtFrame(i), DistanceCurveValues[i]);
 	}
-	Seq->RefreshCurveData();
-	Seq->MarkRawDataAsModified();
-	Seq->OnRawDataChanged();
+
+	Seq->MarkPackageDirty();
+}
+
+void USoloBlueprintFunctionLibrary::GenerateRootMotionCurve(UAnimSequence* Seq)
+{
+	const FName DistanceCurveName = TEXT("DistanceCurve");
+	UAnimationBlueprintLibrary::RemoveCurve(Seq, DistanceCurveName);
+	UAnimationBlueprintLibrary::AddCurve(Seq, DistanceCurveName);
+
+	TArray<float> DistanceCurveValues;
+	DistanceCurveValues.Reserve(Seq->GetDataModel()->GetNumberOfFrames());
+	for(int32 i = 0; i <= Seq->GetDataModel()->GetNumberOfFrames(); ++i)
+	{
+		const float Time = Seq->GetTimeAtFrame(i);
+		FTransform RootPose;
+		UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), Time, true, RootPose);
+		float Distance = RootPose.GetLocation().Size();
+		Distance = static_cast<int32>(Distance * 10.f) / 10.f;
+		DistanceCurveValues.Add(Distance);
+	}
+	for(int32 i = 0; i < DistanceCurveValues.Num(); ++i)
+	{
+		UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, DistanceCurveName, Seq->GetTimeAtFrame(i), DistanceCurveValues[i]);
+	}
 	Seq->MarkPackageDirty();
 }
 
 void USoloBlueprintFunctionLibrary::GenerateRotationCurve(UAnimSequence* Seq)
 {
-	float Offset = 0.f;
+	float Offset;
 	FString LeftS, RightS;
 	if(Seq->GetName().Split(TEXT("_Left_"), &LeftS, &RightS))
 	{
@@ -1252,63 +1261,68 @@ void USoloBlueprintFunctionLibrary::GenerateRotationCurve(UAnimSequence* Seq)
 	const FName RotationCurveName = TEXT("RotationCurve");
 	UAnimationBlueprintLibrary::RemoveCurve(Seq, RotationCurveName);
 	UAnimationBlueprintLibrary::AddCurve(Seq, RotationCurveName);
-	for(int32 i = 0; i < Seq->GetNumberOfFrames(); ++i)
+	for(int32 i = 0; i < Seq->GetDataModel()->GetNumberOfFrames(); ++i)
 	{
-		float Time = Seq->GetTimeAtFrame(i);
+		const float Time = Seq->GetTimeAtFrame(i);
 		FTransform RootPose;
 		UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), Time, true, RootPose);
-		float Yaw = FMath::Abs(RootPose.GetRotation().Rotator().Yaw);
+		const float Yaw = FMath::Abs(RootPose.GetRotation().Rotator().Yaw);
 		UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, RotationCurveName, Time, Yaw - Offset);
 		
 	}
-	Seq->RefreshCurveData();
-	Seq->MarkRawDataAsModified();
-	Seq->OnRawDataChanged();
+
 	Seq->MarkPackageDirty();
 }
 
 
-void USoloBlueprintFunctionLibrary::GenerateRotating(UAnimSequence* Seq)
+bool USoloBlueprintFunctionLibrary::GenerateRotating(UAnimSequence* Seq, bool bDryRun)
 {
 	if(!Seq)
 	{
-		return;
+		return false;
 	}
 	FSmartName RotationCurveSmartName;
 	Seq->GetSkeleton()->GetSmartNameByName(USkeleton::AnimCurveMappingName, TEXT("RotationCurve"), RotationCurveSmartName);
 	if(!RotationCurveSmartName.IsValid())
 	{
-		return;
+		return false;
 	}
+	
 	const FFloatCurve* RotationCurve = static_cast<const FFloatCurve*>(Seq->GetCurveData().GetCurveData(RotationCurveSmartName.UID));
 	if(!RotationCurve)
 	{
-		return;
+		return false;
 	}
-	const FName RotatingCurveName = TEXT("bRotating");
-	UAnimationBlueprintLibrary::RemoveCurve(Seq, RotatingCurveName);
-	UAnimationBlueprintLibrary::AddCurve(Seq, RotatingCurveName);
-	UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, RotatingCurveName, 0, 1.f);
 
+
+	FSmartName RotatingCurveSmartName;
+	const FName RotatingCurveName = TEXT("bRotating");
+	Seq->GetSkeleton()->AddSmartNameAndModify(USkeleton::AnimCurveMappingName, RotatingCurveName, RotatingCurveSmartName);	
+	const FAnimationCurveIdentifier CurveId(RotatingCurveSmartName, ERawCurveTrackTypes::RCT_Float);
+
+	bool bFound = false;
+	if(!bDryRun)
+	{
+		Seq->GetController().RemoveCurve(CurveId);
+		Seq->GetController().AddCurve(CurveId);
+		Seq->GetController().SetCurveKey(CurveId, FRichCurveKey{0.f, 1.f, 0.f, 0.f, ERichCurveInterpMode::RCIM_Constant});
+	}
+	
 	for(auto It = RotationCurve->FloatCurve.GetKeyIterator(); It; ++It)
 	{
 		if(FMath::Abs(It->Value) < KINDA_SMALL_NUMBER)
 		{
-			UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, RotatingCurveName, It->Time, 0.f);
+			bFound = true;
+			if(!bDryRun)
+			{
+				Seq->GetController().SetCurveKey(CurveId, FRichCurveKey{It->Time, 1.f, 0.f, 0.f, ERichCurveInterpMode::RCIM_Constant});
+			}
 			break;
 		}
 	}
-	FSmartName RotatingCurveSmartName;
-	Seq->GetSkeleton()->GetSmartNameByName(USkeleton::AnimCurveMappingName, RotatingCurveName, RotatingCurveSmartName);
-	FFloatCurve* RotatingCurve = static_cast<FFloatCurve*>(Seq->RawCurveData.GetCurveData(RotatingCurveSmartName.UID));
-	for(auto It = RotatingCurve->FloatCurve.GetKeyHandleIterator(); It; ++It)
-	{
-		RotatingCurve->FloatCurve.SetKeyInterpMode(*It, ERichCurveInterpMode::RCIM_Constant);
-	}
-	Seq->RefreshCurveData();
-	Seq->MarkRawDataAsModified();
-	Seq->OnRawDataChanged();
-	Seq->MarkPackageDirty();
+	
+	if(!bDryRun) Seq->MarkPackageDirty();
+	return bFound;
 }
 
 
@@ -1318,20 +1332,19 @@ void USoloBlueprintFunctionLibrary::GenerateDisableSpeedWarpingCurve(UAnimSequen
 	UAnimationBlueprintLibrary::RemoveCurve(Seq, SpeedCurveName);
 	UAnimationBlueprintLibrary::AddCurve(Seq, SpeedCurveName);
 
-	float StartTime = 0.f, EndTime = Seq->SequenceLength;
-	const int32 Steps = Seq->GetNumberOfFrames() - 1;
+	float StartTime = 0.f, EndTime = Seq->GetDataModel()->GetPlayLength();
+	const int32 Steps = Seq->GetDataModel()->GetNumberOfFrames() - 1;
 	int32 i = 0;
 	for(; i < Steps - 1 ; ++i)
 	{
-		float CurrentTime = (Seq->SequenceLength / Steps)  * i;
-		float NextTime = (Seq->SequenceLength / Steps)  * (i + 1);
-		float dT = NextTime - CurrentTime;
+		float CurrentTime = (Seq->GetDataModel()->GetPlayLength() / Steps)  * i;
+		float NextTime = (Seq->GetDataModel()->GetPlayLength() / Steps)  * (i + 1);
+		float DeltaTime = NextTime - CurrentTime;
 		FTransform CurrentRootPose, NextRootPose;
 		UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), CurrentTime, true, CurrentRootPose);
 		UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), NextTime, true, NextRootPose);
 		float Distance = (NextRootPose.GetLocation() - CurrentRootPose.GetLocation()).Size();
-		float Value = int32((Distance / dT) * 10.f) / 10.f;
-		if(Value > 5)
+		if(float Value = static_cast<int32>((Distance / DeltaTime) * 10.f) / 10.f; Value > 5)
 		{
 			StartTime = NextTime;
 			break;
@@ -1340,7 +1353,7 @@ void USoloBlueprintFunctionLibrary::GenerateDisableSpeedWarpingCurve(UAnimSequen
 	i+=10;
 	FTransform RootStartPos, RootEndPos;
 	UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), 0, true, RootStartPos);
-	UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), Seq->SequenceLength, true, RootEndPos);
+	UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, TEXT("root"), Seq->GetDataModel()->GetPlayLength(), true, RootEndPos);
 	FVector RootDir = RootEndPos.GetLocation() - RootStartPos.GetLocation();
 	RootDir.Normalize();
 	float FrameTime = Seq->GetTimeAtFrame(1) - Seq->GetTimeAtFrame(0);
@@ -1364,9 +1377,8 @@ void USoloBlueprintFunctionLibrary::GenerateDisableSpeedWarpingCurve(UAnimSequen
 	FName BoneName = bUseRight? TEXT("foot_r") : TEXT("foot_l");
 	for(; i < Steps - 1; ++i)
 	{
-		float CurrentTime = (Seq->SequenceLength / Steps)  * i;
-		float NextTime = (Seq->SequenceLength / Steps)  * (i + 1);
-		float dT = NextTime - CurrentTime;
+		float CurrentTime = (Seq->GetDataModel()->GetPlayLength() / Steps)  * i;
+		float NextTime = (Seq->GetDataModel()->GetPlayLength() / Steps)  * (i + 1);
 		
 		FTransform CurrentPos = GetBonePoseForTimeRelativeToRoot(Seq, BoneName, CurrentTime);
 		FTransform NextPos = GetBonePoseForTimeRelativeToRoot(Seq, BoneName, NextTime);
@@ -1382,12 +1394,10 @@ void USoloBlueprintFunctionLibrary::GenerateDisableSpeedWarpingCurve(UAnimSequen
 	UAnimationBlueprintLibrary::RemoveCurve(Seq, DisableSpeedWarpingName);
 	UAnimationBlueprintLibrary::AddCurve(Seq, DisableSpeedWarpingName);
 	UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, DisableSpeedWarpingName, 0.f, 1.f);
-	UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, DisableSpeedWarpingName, Seq->SequenceLength, 0.f);
+	UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, DisableSpeedWarpingName, Seq->GetDataModel()->GetPlayLength(), 0.f);
 	UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, DisableSpeedWarpingName, StartTime, 1.f);
 	UAnimationBlueprintLibrary::AddFloatCurveKey(Seq, DisableSpeedWarpingName, EndTime, 0.f);
-	Seq->RefreshCurveData();
-	Seq->MarkRawDataAsModified();
-	Seq->OnRawDataChanged();
+
 	Seq->MarkPackageDirty();
 }
 
@@ -1410,80 +1420,70 @@ void USoloBlueprintFunctionLibrary::ApplyDistanceCurveAsRootMotion(UAnimSequence
 	{
 		return;
 	}
-	const FScopedTransaction Transaction(FText::FromString(TEXT("ApplyDistanceCurveAsRootMotion")));
-	//Call modify to restore anim sequence current state
-	Sequence->Modify();
 
-	auto GetRawTrackIndex = [Sequence](FName BoneName)
-	{
-		int32 BoneIndex = Sequence->GetSkeleton()->GetReferenceSkeleton().FindBoneIndex(BoneName);
-		int32 TrackIndex;
-
-		for (TrackIndex = 0; TrackIndex < Sequence->GetRawTrackToSkeletonMapTable().Num(); ++TrackIndex)
-		{
-			if (Sequence->GetRawTrackToSkeletonMapTable()[TrackIndex].BoneTreeIndex == BoneIndex)
-			{
-				return TrackIndex;
-			}
-		}
-
-		return -1;
-	};
-	FName RootBoneName = TEXT("root");
-	FName PelvisBoneName = TEXT("pelvis");
-
-	int32 RootTrackIndex = GetRawTrackIndex(RootBoneName);
-	int32 PelvisTrackIndex = GetRawTrackIndex(PelvisBoneName);
-	TArray<FTransform> PelvisTransforms;
+	const FName RootBoneName = TEXT("root");
+	const FName PelvisBoneName = TEXT("pelvis");
 	
-	FVector Direction;
+	FVector Direction = FVector::ZeroVector;
 	if(OptionalDirection.IsNearlyZero())
 	{
-		FRawAnimSequenceTrack& RawTrack = Sequence->GetRawAnimationTrack(RootTrackIndex);
-		Direction = RawTrack.PosKeys.Last() - RawTrack.PosKeys[0];
+		const FBoneAnimationTrack& Track = Sequence->GetDataModel()->GetBoneTrackByName(RootBoneName);
+		FVector LastPosKey = Track.InternalTrackData.PosKeys.Last();
+		FVector FirstPosKey = Track.InternalTrackData.PosKeys[0];
+		Direction = LastPosKey - FirstPosKey;
 	}
 	else
 	{
 		Direction = OptionalDirection;
 	}
 	Direction.Normalize();
-	FRawAnimSequenceTrack& RawRootTrack = Sequence->GetRawAnimationTrack(RootTrackIndex);
-	FRawAnimSequenceTrack& RawPelvisTrack = Sequence->GetRawAnimationTrack(PelvisTrackIndex);
+	if(Direction.IsNearlyZero())
+	{
+		return;
+	}
 
-	for(int32 i = 0; i < Sequence->GetNumberOfFrames(); ++i)
+	TArray<FTransform> PelvisTransforms;
+	for(int32 i = 0; i <= Sequence->GetDataModel()->GetNumberOfFrames(); ++i)
 	{
 		FTransform FramePose = GetBonePoseForTimeRelativeToRoot(Sequence, PelvisBoneName, Sequence->GetTimeAtFrame(i), true);
 		PelvisTransforms.Add(FramePose);
 	}
-	RawRootTrack.PosKeys.Empty();
-	for(int32 i = 0; i < Sequence->GetNumberOfFrames(); ++i)
+
+	TArray<FVector> RootPosKeys;
+	TArray<FQuat> RootRotKeys;
+	TArray<FVector> RootScaleKeys;
+	for(int32 i = 0; i <= Sequence->GetDataModel()->GetNumberOfFrames(); ++i)
 	{
 		auto DistanceCurveValue = AnimCurve->Evaluate(Sequence->GetTimeAtFrame(i));
 		FVector NewPos = Direction * DistanceCurveValue;
-		RawRootTrack.PosKeys.Add(NewPos);
+		RootPosKeys.Add(NewPos);
+		RootRotKeys.Add(FQuat::Identity);
+		RootScaleKeys.Add(FVector::OneVector);
 	}
-	RawPelvisTrack.PosKeys.Empty();
-	RawPelvisTrack.RotKeys.Empty();
-	RawPelvisTrack.ScaleKeys.Empty();
-	for(int32 i = 0; i < Sequence->GetNumberOfFrames(); ++i)
-	{
-		const FQuat& ParentRot = RawRootTrack.RotKeys.IsValidIndex(i)? RawRootTrack.RotKeys[i] : RawRootTrack.RotKeys.IsValidIndex(0)? RawRootTrack.RotKeys[0] : FQuat::Identity;
-		const FVector& ParentPos = RawRootTrack.PosKeys.IsValidIndex(i)? RawRootTrack.PosKeys[i] : RawRootTrack.PosKeys.IsValidIndex(0)? RawRootTrack.PosKeys[0] : FVector::ZeroVector;
-		const FVector& ParentScale = RawRootTrack.ScaleKeys.IsValidIndex(i)? RawRootTrack.ScaleKeys[i] : RawRootTrack.ScaleKeys.IsValidIndex(0)? RawRootTrack.ScaleKeys[0] : FVector::OneVector;
-		const FTransform ParentToWorld = {ParentRot, ParentPos, ParentScale};
-		FTransform RelativeTM = PelvisTransforms[i].GetRelativeTransform(ParentToWorld);
-		RawPelvisTrack.PosKeys.Add(RelativeTM.GetLocation());
-		RawPelvisTrack.ScaleKeys.Add(RelativeTM.GetScale3D());
-		RawPelvisTrack.RotKeys.Add(RelativeTM.GetRotation());
-	}
-	Sequence->MarkRawDataAsModified();
-	Sequence->OnRawDataChanged();
 
+	TArray<FVector> PelvisPosKeys;
+	TArray<FQuat> PelvisRotKeys;
+	TArray<FVector> PelvisScaleKeys;
+	for(int32 i = 0; i <= Sequence->GetDataModel()->GetNumberOfFrames(); ++i)
+	{
+		const FQuat& ParentRot = RootRotKeys[i];
+		const FVector& ParentPos = RootPosKeys[i];
+		const FVector& ParentScale = RootScaleKeys[i];
+		const FTransform ParentToWorld {ParentRot, ParentPos, ParentScale};
+		auto RelativeTM = PelvisTransforms[i].GetRelativeTransform(ParentToWorld);
+		PelvisPosKeys.Add(RelativeTM.GetLocation());
+		PelvisScaleKeys.Add(RelativeTM.GetScale3D());
+		PelvisRotKeys.Add(RelativeTM.GetRotation());
+	}
+
+	Sequence->GetController().SetBoneTrackKeys(RootBoneName, RootPosKeys, RootRotKeys, RootScaleKeys);
+	Sequence->GetController().SetBoneTrackKeys(PelvisBoneName, PelvisPosKeys, PelvisRotKeys, PelvisScaleKeys);
+	Sequence->GetController().NotifyPopulated();
 	Sequence->MarkPackageDirty();
 #endif
 }
 
-bool USoloBlueprintFunctionLibrary::GenerateIKBonesFollowFK(UAnimSequence* Seq, bool bDryRun)
+bool USoloBlueprintFunctionLibrary::GenerateIKBonesFollowFK(UAnimSequence* Seq, const bool bDryRun)
 {
 	TMap<FName, FName> MatchBones {
 			{TEXT("ik_foot_root"), TEXT("root")},
@@ -1494,6 +1494,7 @@ bool USoloBlueprintFunctionLibrary::GenerateIKBonesFollowFK(UAnimSequence* Seq, 
 			{TEXT("ik_hand_l"), TEXT("hand_l")},
 			{TEXT("ik_hand_r"), TEXT("hand_r")}
 	};
+	
 	TMap<FName, FName> BoneParents {
 				{TEXT("ik_foot_root"), TEXT("root")},
 				{TEXT("ik_hand_root"), TEXT("root")},
@@ -1503,33 +1504,14 @@ bool USoloBlueprintFunctionLibrary::GenerateIKBonesFollowFK(UAnimSequence* Seq, 
 				{TEXT("ik_hand_l"), TEXT("ik_hand_gun")},
 				{TEXT("ik_hand_r"), TEXT("ik_hand_gun")}
 	};
-	auto GetRawTrackIndex = [Seq](FName BoneName)
-	{
-		int32 BoneIndex = Seq->GetSkeleton()->GetReferenceSkeleton().FindBoneIndex(BoneName);
-		int32 TrackIndex;
-
-		for (TrackIndex = 0; TrackIndex < Seq->GetRawTrackToSkeletonMapTable().Num(); ++TrackIndex)
-		{
-			if (Seq->GetRawTrackToSkeletonMapTable()[TrackIndex].BoneTreeIndex == BoneIndex)
-			{
-				return TrackIndex;
-			}
-		}
-
-		return -1;
-	};
 	
-
 	for(auto& Match : MatchBones)
 	{
-		int32 IKTrackIndex = GetRawTrackIndex(Match.Key);
-		FRawAnimSequenceTrack& RawIKTrack = Seq->GetRawAnimationTrack(IKTrackIndex);
-		if(!bDryRun)
-		{
-			RawIKTrack.PosKeys.Empty();
-			RawIKTrack.RotKeys.Empty();
-		}
-		for(int i = 0; i < Seq->GetNumberOfFrames(); ++i)
+		TArray<FVector> PosKeys;
+		TArray<FQuat> RotKeys;
+		TArray<FVector> ScaleKeys;
+
+		for(int i = 0; i <= Seq->GetDataModel()->GetNumberOfFrames(); ++i)
 		{
 			auto IkTr = GetBonePoseForTimeRelativeToRoot(Seq, Match.Key, Seq->GetTimeAtFrame(i), true);
 			auto FKTr = GetBonePoseForTimeRelativeToRoot(Seq, Match.Value, Seq->GetTimeAtFrame(i), true);
@@ -1538,30 +1520,122 @@ bool USoloBlueprintFunctionLibrary::GenerateIKBonesFollowFK(UAnimSequence* Seq, 
 				UE_LOG(LogTemp, Log, TEXT("Unmatched bones %s %s in anim %s"), *Match.Key.ToString(), *Match.Value.ToString(), *Seq->GetName());
 				return true;
 			}
-			if(!bDryRun)
-			{
-				auto ParentTr = GetBonePoseForTimeRelativeToRoot(Seq, BoneParents[Match.Key], Seq->GetTimeAtFrame(i), true);
-				FTransform RelativeTM = FKTr.GetRelativeTransform(ParentTr);
-				RawIKTrack.PosKeys.Add(RelativeTM.GetLocation());
-				RawIKTrack.RotKeys.Add(RelativeTM.GetRotation());
-			}
+			auto ParentTr = GetBonePoseForTimeRelativeToRoot(Seq, BoneParents[Match.Key], Seq->GetTimeAtFrame(i), true);
+			FTransform RelativeTM = FKTr.GetRelativeTransform(ParentTr);
+			PosKeys.Add(RelativeTM.GetLocation());
+			RotKeys.Add(RelativeTM.GetRotation());
+			ScaleKeys.Add(FVector::OneVector);
 		}
 		if(!bDryRun)
 		{
-			Seq->MarkRawDataAsModified();
-			Seq->OnRawDataChanged();
+			Seq->GetController().SetBoneTrackKeys(Match.Key, PosKeys, RotKeys, ScaleKeys);
+			Seq->GetController().NotifyPopulated();
 			Seq->MarkPackageDirty();
 		}
 	}
 	return false;
 }
 
-FTransform USoloBlueprintFunctionLibrary::GetBonePoseForTimeRelativeToRoot(UAnimSequence* Seq, FName Bone, float Time, bool bUseRoot)
+void USoloBlueprintFunctionLibrary::BuildJumpAnims(UAnimSequence* FullJump, int32 StartBeginFrame, int32 ApexBeginFrame, int32 ApexEndFrame, int32 FallEndFrame)
+{
+#if WITH_EDITOR
+	GenerateRootMotionCurve(FullJump);
+
+	const FName DistanceCurveName = TEXT("DistanceCurve");
+
+	//this calculates a simple fall with constant acceleration from beginning of start section to max z
+	FSmartName CurveSmartName;
+	FullJump->GetSkeleton()->GetSmartNameByName(USkeleton::AnimCurveMappingName, DistanceCurveName, CurveSmartName);
+	const FFloatCurve* AnimCurve = static_cast<const FFloatCurve*>(FullJump->GetCurveData().GetCurveData(CurveSmartName.UID));
+	TArray<float> Keys, Values;
+	AnimCurve->GetKeys(Keys, Values);
+	float* Max = Algo::MaxElement(Values);
+	int32 TopFrame = Max - &Values[0];
+	float TopFrameTime = Keys[TopFrame];
+	TopFrame = FullJump->GetFrameAtTime(TopFrameTime);
+	float StartFrameTime = FullJump->GetTimeAtFrame(StartBeginFrame);
+	
+	float AccelStart = (2 * (*Max)) / ((TopFrameTime - StartFrameTime) * (TopFrameTime - StartFrameTime));
+
+	const FName FakeDistanceCurveName = TEXT("FakeDistanceCurveName");
+
+	UAnimationBlueprintLibrary::RemoveCurve(FullJump, FakeDistanceCurveName);
+	UAnimationBlueprintLibrary::AddCurve(FullJump, FakeDistanceCurveName);
+
+	for(int32 i = TopFrame; i >= StartBeginFrame; --i)
+	{
+		float FrameTime = FullJump->GetTimeAtFrame(TopFrame - i);
+		UAnimationBlueprintLibrary::AddFloatCurveKey(FullJump, FakeDistanceCurveName, FullJump->GetTimeAtFrame(i), *Max - (AccelStart * FrameTime * FrameTime) / 2);
+	}
+	UAnimationBlueprintLibrary::AddFloatCurveKey(FullJump, FakeDistanceCurveName, FullJump->GetTimeAtFrame(StartBeginFrame), 0);
+	UAnimationBlueprintLibrary::AddFloatCurveKey(FullJump, FakeDistanceCurveName, 0, 0);
+	UAnimationBlueprintLibrary::AddFloatCurveKey(FullJump, FakeDistanceCurveName, TopFrameTime, *Max);
+	float FallEndFramTime = FullJump->GetTimeAtFrame(FallEndFrame);
+
+	float AccelFall = (2 * (*Max)) / ((FallEndFramTime - TopFrameTime) * (FallEndFramTime - TopFrameTime));
+
+	for(int32 i = TopFrame; i <= FallEndFrame; ++i)
+	{
+		float FrameTime = FullJump->GetTimeAtFrame((TopFrame - i) * -1);
+		UAnimationBlueprintLibrary::AddFloatCurveKey(FullJump, FakeDistanceCurveName, FullJump->GetTimeAtFrame(i), *Max - (AccelFall * FrameTime * FrameTime) / 2);
+	}
+	UAnimationBlueprintLibrary::AddFloatCurveKey(FullJump, FakeDistanceCurveName, FullJump->GetTimeAtFrame(FallEndFrame), 0);
+	UAnimationBlueprintLibrary::AddFloatCurveKey(FullJump, FakeDistanceCurveName, FullJump->GetPlayLength(), 0);
+	UAnimationBlueprintLibrary::AddFloatCurveKey(FullJump, FakeDistanceCurveName, TopFrameTime, *Max);
+
+		
+	FString Path = FullJump->GetPathName();
+	Path.Split(TEXT("."), &Path, nullptr);
+	Path.Split(TEXT("/"), &Path, nullptr, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+	Path += "/";
+	
+	FString AnimPath = FullJump->GetPathName();
+	FString AnimName;
+	AnimPath.Split(TEXT("."), &AnimPath, &AnimName);
+	UEditorAssetLibrary::DeleteAsset(Path + TEXT("Jump_Start"));
+	UEditorAssetLibrary::DeleteAsset(Path + TEXT("Jump_Apex"));
+	UEditorAssetLibrary::DeleteAsset(Path + TEXT("Jump_Land"));
+	UEditorAssetLibrary::DeleteAsset(Path + TEXT("Jump_Recovery"));
+	UEditorAssetLibrary::DeleteAsset(Path + TEXT("Jump_Loop"));
+	auto* Jump_Start = Cast<UAnimSequence>(UEditorAssetLibrary::DuplicateAsset(AnimPath, Path + TEXT("Jump_Start")));
+	auto* Jump_Apex = Cast<UAnimSequence>(UEditorAssetLibrary::DuplicateAsset(AnimPath, Path + TEXT("Jump_Apex")));
+	auto* Jump_Land = Cast<UAnimSequence>(UEditorAssetLibrary::DuplicateAsset(AnimPath, Path + TEXT("Jump_Land")));
+	auto* Jump_Recovery = Cast<UAnimSequence>(UEditorAssetLibrary::DuplicateAsset(AnimPath, Path + TEXT("Jump_Recovery")));
+	auto* Jump_Loop = Cast<UAnimSequence>(UEditorAssetLibrary::DuplicateAsset(AnimPath, Path + TEXT("Jump_Loop")));
+	
+	UE::Anim::AnimationData::RemoveKeys(Jump_Start, 0, StartBeginFrame);
+	UE::Anim::AnimationData::RemoveKeys(Jump_Start, ApexBeginFrame - StartBeginFrame + 1, Jump_Start->GetDataModel()->GetNumberOfKeys() - (ApexBeginFrame - StartBeginFrame + 1));
+	UE::Anim::AnimationData::RemoveKeys(Jump_Apex, 0, ApexBeginFrame);
+	UE::Anim::AnimationData::RemoveKeys(Jump_Apex, (ApexEndFrame - ApexBeginFrame + 1), Jump_Apex->GetDataModel()->GetNumberOfKeys() - (ApexEndFrame - ApexBeginFrame + 1));
+	UE::Anim::AnimationData::RemoveKeys(Jump_Land, 0, ApexEndFrame);
+	UE::Anim::AnimationData::RemoveKeys(Jump_Land, (FallEndFrame - ApexEndFrame + 1), Jump_Land->GetDataModel()->GetNumberOfKeys() - (FallEndFrame - ApexEndFrame + 1));
+	UE::Anim::AnimationData::RemoveKeys(Jump_Recovery, 0, FallEndFrame);
+	UE::Anim::AnimationData::RemoveKeys(Jump_Loop, 0, ApexEndFrame);
+	UE::Anim::AnimationData::RemoveKeys(Jump_Loop, 1, Jump_Loop->GetDataModel()->GetNumberOfKeys() - 1);
+
+	TArray PositionalKeys {{FVector3f::ZeroVector}};
+	TArray RotationalKeys {{FQuat4f::Identity}};
+	TArray ScalingKeys {{FVector3f::OneVector}};
+	Jump_Start->GetController().SetBoneTrackKeys(TEXT("root"), PositionalKeys, RotationalKeys, ScalingKeys);
+	Jump_Start->GetController().NotifyPopulated();
+	Jump_Apex->GetController().SetBoneTrackKeys(TEXT("root"), PositionalKeys, RotationalKeys, ScalingKeys);
+	Jump_Apex->GetController().NotifyPopulated();
+	Jump_Land->GetController().SetBoneTrackKeys(TEXT("root"), PositionalKeys, RotationalKeys, ScalingKeys);
+	Jump_Land->GetController().NotifyPopulated();
+	Jump_Recovery->GetController().SetBoneTrackKeys(TEXT("root"), PositionalKeys, RotationalKeys, ScalingKeys);
+	Jump_Recovery->GetController().NotifyPopulated();
+	Jump_Loop->GetController().SetBoneTrackKeys(TEXT("root"), PositionalKeys, RotationalKeys, ScalingKeys);
+	Jump_Loop->GetController().NotifyPopulated();
+	
+#endif
+}
+
+FTransform USoloBlueprintFunctionLibrary::GetBonePoseForTimeRelativeToRoot(const UAnimSequence* Seq, const FName Bone, const float Time, const bool bUseRoot)
 {
 	TArray<FName> Path;
 	UAnimationBlueprintLibrary::FindBonePathToRoot(Seq, Bone, Path);
 	FTransform Result = FTransform::Identity;
-	for(auto& B : Path)
+	for(const auto& B : Path)
 	{
 		FTransform FramePose;
 		UAnimationBlueprintLibrary::GetBonePoseForTime(Seq, B, Time, bUseRoot, FramePose);

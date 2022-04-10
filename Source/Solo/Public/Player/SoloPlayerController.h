@@ -33,21 +33,11 @@ protected:
 
 	virtual void SetupInputComponent() override;
 	FVector2D MoveInput;
-	void MoveRight(float Val);
-	void MoveForward(float Val);
 	FVector2D LookInput;
-	void TurnRight(float Val);
-	void TurnForward(float Val);
 
 	FVector2D MouseInput;
-	void MouseX(float Val);
-	void MouseY(float Val);
 	bool bAiming = false;
-	void MouseAimOn(FKey Key);
-	void MouseAimOff(FKey Key);
+
 	float DebugPitch;
-	void DebugPitchUp(float Val);
-	void DebugPitchDown(float Val);
-	void JumpPressed(FKey Key);
-	void JumpReleased(FKey Key);
+
 };

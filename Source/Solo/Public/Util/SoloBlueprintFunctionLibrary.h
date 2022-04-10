@@ -24,8 +24,6 @@ enum class ECardinalDirection : uint8
 
 FString EnumToString(const ECardinalDirection Value);
 
-class UBlendSpaceBase;
-
 UCLASS(BlueprintType)
 class SOLO_API USoloAnimSetDefinition : public UDataAsset
 {
@@ -55,12 +53,16 @@ public:
 	TMap<ECardinalDirection, UAnimSequence*> RunStopAnims;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Sprint_{Dir}_Stop"))
 	TMap<ECardinalDirection, UAnimSequence*> SprintStopAnims;
-	// UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Walk_{Dir}_Start_{Angle}"))
-	// TMap<ECardinalDirection, UAnimSequence*> WalkRotStartAnims;
-	// UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Run_{Dir}_Start_{Angle}"))
-	// TMap<ECardinalDirection, UAnimSequence*> RunRotStartAnims;
-	// UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Sprint_{Dir}_Start_{Angle}"))
-	// TMap<ECardinalDirection, UAnimSequence*> SprintRotStartAnims;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Jump_Start"))
+	UAnimSequence* JumpStart = nullptr;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Jump_Apex"))
+	UAnimSequence* JumpApex = nullptr;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Jump_Loop"))
+	UAnimSequence* JumpLoop = nullptr;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Jump_Land"))
+	UAnimSequence* JumpLand = nullptr;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize, NameFormat = "Jump_Recovery_Add"))
+	UAnimSequence* JumpRecoveryAdd = nullptr;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, meta = (EditFixedSize))
 	TMap<int32, UAnimSequence*> TurnAnims;
@@ -100,7 +102,7 @@ struct FAnimStateMachineHandle
 	GENERATED_BODY()
 public:
 	const struct FBakedAnimationStateMachine* StateMachineDesc = nullptr;
-	struct FAnimNode_StateMachine* StateMachine = nullptr;
+	const struct FAnimNode_StateMachine* StateMachine = nullptr;
 };
 
 USTRUCT(BlueprintType)
@@ -108,7 +110,7 @@ struct FAnimStateMachineStateHandle
 {
 	GENERATED_BODY()
 public:
-	struct FAnimNode_StateMachine* StateMachine = nullptr;
+	const struct FAnimNode_StateMachine* StateMachine = nullptr;
 	int32 StateIndex = INDEX_NONE;
 };
 /**
@@ -153,9 +155,9 @@ determines which cardinal direction to switch to. Note: This function expectes t
 	UFUNCTION(BlueprintCallable, Category = "Editor")
 	static void MarkPackageDirty(UObject* Package);
 	UFUNCTION(BlueprintCallable, Category = "Editor")
-	static void ApplyDistanceCurveAsRootMotion(UAnimSequence* Sequence, FVector OptionalDirection);
+	static void ApplyDistanceCurveAsRootMotion(UAnimSequence* Sequence, FVector OptionalDirection = FVector::ZeroVector);
 	
-	static bool FindDirectionChangeTime(UAnimSequence* Seq, float& Time);
+	static bool FindDirectionChangeTime(const UAnimSequence* Seq, float& Time);
 	UFUNCTION(BlueprintCallable, Category = "Editor")
 	static void GenerateSyncMarkers(UAnimSequence* Seq, bool bAnimLoops);
 	UFUNCTION(BlueprintCallable, Category = "Editor")
@@ -163,9 +165,11 @@ determines which cardinal direction to switch to. Note: This function expectes t
 	UFUNCTION(BlueprintCallable, Category = "Editor")
 	static void GenerateDistanceCurve(UAnimSequence* Seq);
 	UFUNCTION(BlueprintCallable, Category = "Editor")
+	static void GenerateRootMotionCurve(UAnimSequence* Seq);
+	UFUNCTION(BlueprintCallable, Category = "Editor")
 	static void GenerateRotationCurve(UAnimSequence* Seq);
 	UFUNCTION(BlueprintCallable, Category = "Editor")
-	static void GenerateRotating(UAnimSequence* Seq);
+	static bool GenerateRotating(UAnimSequence* Seq, bool bDryRun);
 	UFUNCTION(BlueprintCallable, Category = "Editor")
 	static void GenerateDisableSpeedWarpingCurve(UAnimSequence* Seq);
 
@@ -173,5 +177,8 @@ determines which cardinal direction to switch to. Note: This function expectes t
 	UFUNCTION(BlueprintCallable, Category = "Editor")
 	static bool GenerateIKBonesFollowFK(UAnimSequence* Seq, bool bDryRun);
 
-	static FTransform GetBonePoseForTimeRelativeToRoot(UAnimSequence* Seq, FName Bone, float Time, bool bUseRoot = false);
+	UFUNCTION(BlueprintCallable, Category = "Editor")
+	static void BuildJumpAnims(UAnimSequence* FullJump, int32 StartBeginFrame, int32 ApexBeginFrame, int32 ApexEndFrame, int32 FallEndFrame);
+
+	static FTransform GetBonePoseForTimeRelativeToRoot(const UAnimSequence* Seq, FName Bone, float Time, bool bUseRoot = false);
 };

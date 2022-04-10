@@ -64,13 +64,13 @@ private:
 public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Config")
-	UBlendSpaceBase* JogBlend = nullptr;
+	UBlendSpace* JogBlend = nullptr;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Config")
 	float MinJogSpeed = 200.f;
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Config")
 	float MaxJogSpeed = 0.f;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Config")
-	UBlendSpaceBase* WalkBlend = nullptr;
+	UBlendSpace* WalkBlend = nullptr;
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Config")
 	float MaxWalkSpeed = 0.f;
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Config", meta = (EditFixedSize))
@@ -277,7 +277,6 @@ public:
 	FTransform JumpPelvisTransform;
 	float StartedWarpingJumpAt;
 private:
-	FAnimNode_StateMachine* LocomotionStateMachine = nullptr;
 	int32 MoveStartStateIndex = INDEX_NONE;
 	int32 MoveStopStateIndex = INDEX_NONE;
 	int32 IdleStateIndex = INDEX_NONE;
