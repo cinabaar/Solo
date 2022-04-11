@@ -11,7 +11,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogSoloGameSession, All, Log)
 ASoloGameSession::ASoloGameSession()
 {
 	PrimaryActorTick.bCanEverTick = true;
-	SessionName = GameSessionName;
+	SessionName = NAME_GameSession;
 }
 
 void ASoloGameSession::Tick(float DeltaSeconds)

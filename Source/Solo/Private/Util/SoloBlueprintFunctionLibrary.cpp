@@ -1428,8 +1428,8 @@ void USoloBlueprintFunctionLibrary::ApplyDistanceCurveAsRootMotion(UAnimSequence
 	if(OptionalDirection.IsNearlyZero())
 	{
 		const FBoneAnimationTrack& Track = Sequence->GetDataModel()->GetBoneTrackByName(RootBoneName);
-		FVector LastPosKey = Track.InternalTrackData.PosKeys.Last();
-		FVector FirstPosKey = Track.InternalTrackData.PosKeys[0];
+		FVector LastPosKey = FVector(Track.InternalTrackData.PosKeys.Last());
+		FVector FirstPosKey = FVector(Track.InternalTrackData.PosKeys[0]);
 		Direction = LastPosKey - FirstPosKey;
 	}
 	else
